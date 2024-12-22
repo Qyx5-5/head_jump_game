@@ -48,10 +48,18 @@ class FaceProcessor(BaseProcessor):
         if not self.detection_enabled:
             return frame
 
+        if frame is None or frame.size == 0:
+            print("Warning: Empty frame received in face processor")
+            return frame
+
         try:
             # Convert to RGB for MediaPipe
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        except cv2.error as cv_err:
+            print(f"OpenCV error during color conversion: {cv_err}")
+            return frame
 
+        try:
             # Run face landmark detection
             results = self.face_mesh.process(rgb_frame)
             self._current_landmarks = None
@@ -65,10 +73,14 @@ class FaceProcessor(BaseProcessor):
 
                 # Draw a single point on the nose for each detected face
                 for face_landmarks in results.multi_face_landmarks:
-                    nose = face_landmarks.landmark[1]  # Index 1 is typically nose tip in MediaPipe
-                    nose_x = int(nose.x * w)
-                    nose_y = int(nose.y * h)
-                    cv2.circle(frame, (nose_x, nose_y), 5, (0, 255, 0), -1)
+                    try:
+                        nose = face_landmarks.landmark[1]  # Index 1 is typically nose tip in MediaPipe
+                        nose_x = int(nose.x * w)
+                        nose_y = int(nose.y * h)
+                        cv2.circle(frame, (nose_x, nose_y), 5, (0, 255, 0), -1)
+                    except (IndexError, AttributeError) as e:
+                        print(f"Error accessing landmark data: {e}")
+                        continue
 
             else:
                 self.current_face_count = 0
@@ -76,7 +88,8 @@ class FaceProcessor(BaseProcessor):
             return frame
 
         except Exception as e:
-            print(f"Warning: Face processing error: {e}")
+            print(f"Critical error in face processing: {type(e).__name__}: {e}")
+            self.current_face_count = 0
             return frame
 
     def get_face_landmarks(self):

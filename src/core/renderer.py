@@ -10,6 +10,9 @@ class Renderer:
         self.obstacle_color = (255, 0, 0)
         self.background_x = 0
         self.background_speed = 2
+        self.fps = 0
+        self.frame_count = 0
+        self.start_time = datetime.now()
 
     def render(self, frame, game_state):
         try:
@@ -279,3 +282,34 @@ class Renderer:
                 y_offset += 40
         except Exception as e:
             print(f"Error in _draw_game_over: {e}")
+    
+    def draw_stats(self, frame, face_stats, camera_id):
+        """Draw statistics overlay (moved from VideoProcessor)"""
+        h, w = frame.shape[:2]
+        
+        # Create semi-transparent overlay for stats
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (10, 10), (300, 200), (0, 0, 0), -1)
+        cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
+        
+        # Calculate FPS
+        self.frame_count += 1
+        elapsed_time = (datetime.now() - self.start_time).total_seconds()
+        if elapsed_time > 0:
+            self.fps = self.frame_count / elapsed_time
+        
+        # Draw stats
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        y_offset = 35
+        stats = [
+            f"FPS: {self.fps:.1f}",
+            f"Resolution: {w}x{h}",
+            f"Camera ID: {camera_id}",
+            f"Faces Detected: {face_stats['face_count']}",
+        ]
+        
+        for i, stat in enumerate(stats):
+            cv2.putText(frame, stat, (20, y_offset + i*25),
+                       font, 0.6, (255, 255, 255), 1)
+        
+        return frame

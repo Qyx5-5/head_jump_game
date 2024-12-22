@@ -6,33 +6,22 @@ from .face_processor import FaceProcessor
 from ..core.engine import GameEngine
 from ..core.renderer import Renderer
 from ..utils.game_utils import GameState, LeaderboardManager
+from ..core.input_handler import InputHandler
 import json
 
 class VideoProcessor:
     def __init__(
         self,
-        host='127.0.0.1',
-        port=8000,
+        host=None,
+        port=None,
         camera_id=0,
         detection_confidence=0.5
     ):
         self.host = host
         self.port = port
-        self.camera_id = camera_id  # Start with default camera
-        self.cap = cv2.VideoCapture(self.camera_id)
-        # if not self.cap.isOpened():
-        #     print("Cannot open camera, trying backup camera indices")
-        #     # Try backup camera indices
-        #     for i in range(1, 5):
-        #         if i == self.camera_id:
-        #             self.cap.release()
-        #             self.cap = cv2.VideoCapture(i)                
-        #             if self.cap.isOpened():
-        #                 self.camera_id = i
-        #                 print(f"Camera {self.camera_id} opened successfully")                        ()
-        #     if not self.cap.isOpened():
-        #         print("Cannot open camera, exiting")
-        # self.detection_confidence = detection_confidence
+        self.camera_id = camera_id
+        self.cap = None  # Initialize as None
+        self.detection_confidence = detection_confidence
             
         try:
             self.face_processor = FaceProcessor()
@@ -83,22 +72,15 @@ class VideoProcessor:
         self.game_engine = GameEngine(self.config)
         self.renderer = Renderer(self.config)
         self.leaderboard = LeaderboardManager()
-        self.player_name = "Player"
+        self.input_handler = InputHandler(self.game_engine, self.renderer, self.leaderboard)
     
     def _load_config(self, config_path="config.json"):
-        try:
-            with open(config_path, 'r') as f:
-                config = json.load(f)
-                # Set width and height based on camera resolution
-                config['width'] = int(self.target_resolution[0])
-                config['height'] = int(self.target_resolution[1])
-                return config
-        except FileNotFoundError:
-            print("Warning: config.json not found, using default values")
-            return {
-                'width': int(self.target_resolution[0]),
-                'height': int(self.target_resolution[1])
-            }
+        """Load configuration using ConfigManager"""
+        from ..utils.config_manager import ConfigManager
+        config_manager = ConfigManager(config_path)
+        if not config_manager.validate_config():
+            print("Warning: Config validation failed, using validated defaults")
+        return config_manager.config
     
     def draw_stats(self, frame):
         """Draw statistics and information overlay on the frame"""
@@ -182,16 +164,29 @@ class VideoProcessor:
             # Process face detection only if we have a valid frame
             if frame is not None and frame.size > 0:
                 if self.face_processor:
-                    face_frame = self.face_processor.process_frame(frame)
-                    landmarks = self.face_processor.get_face_landmarks()
+                    try:
+                        face_frame = self.face_processor.process_frame(frame)
+                        landmarks = self.face_processor.get_face_landmarks()
+                    except cv2.error as cv_err:
+                        print(f"OpenCV error during face processing: {cv_err}")
+                        face_frame = frame
+                        landmarks = None
+                    except Exception as e:
+                        print(f"Face processing error: {e}")
+                        face_frame = frame
+                        landmarks = None
                 else:
                     face_frame = frame
                     landmarks = None
 
-                # Get nose position
-                nose_point = self._get_nose_position(landmarks, frame.shape)
+                # Get nose position with error handling
+                try:
+                    nose_point = self._get_nose_position(landmarks, frame.shape)
+                except Exception as e:
+                    print(f"Error getting nose position: {e}")
+                    nose_point = None
                 
-                # Update game engine
+                # Update game engine only if we have valid nose point
                 if self.game_engine.game_state == GameState.PLAYING:
                     self.game_engine.update(1 / max(self.fps, 1), nose_point)
             else:
@@ -210,7 +205,7 @@ class VideoProcessor:
             return rendered_frame
             
         except Exception as e:
-            print(f"Error in process_frame: {e}")
+            print(f"Critical error in process_frame: {e}")
             # Return a basic error frame
             error_frame = np.zeros((self.config['height'], self.config['width'], 3), dtype=np.uint8)
             cv2.putText(error_frame, f"Processing Error: {str(e)}", 
@@ -253,24 +248,39 @@ class VideoProcessor:
         
         return cap
 
+    def initialize_camera(self):
+        """Initialize camera with fallback options"""
+        if self.cap is not None:
+            self.cap.release()
+        
+        # Try primary camera
+        self.cap = cv2.VideoCapture(self.camera_id)
+        if self.cap.isOpened():
+            print(f"Camera {self.camera_id} opened successfully")
+            return True
+
+        # Try backup camera indices
+        for i in range(5):
+            if i == self.camera_id:
+                continue
+            
+            if self.cap is not None:
+                self.cap.release()
+            
+            self.cap = cv2.VideoCapture(i)
+            if self.cap.isOpened():
+                self.camera_id = i
+                print(f"Camera {self.camera_id} opened successfully")
+                return True
+        
+        print("Error: Could not initialize any camera")
+        return False
+
     def run(self):
-        """Orchestrates the video capture and processing loop."""
-        print("Attempting to setup camera...")
-        cap = self._setup_camera()
-
-        if cap is None or not cap.isOpened():
-            print(f"Cannot open camera {self.current_camera} or any available camera.")
-            available_cameras = get_available_cameras()
-            print(f"Available cameras: {available_cameras}")
-            return
-
-        self.cap = cap # Assign the successfully opened camera to self.cap
-        self.current_camera = self.camera_id # Update current_camera
-
-        print(f"Camera opened successfully")
-        print(f"Resolution: {self.cap.get(cv2.CAP_PROP_FRAME_WIDTH)}x{self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT)}")
-        print(f"FPS: {self.cap.get(cv2.CAP_PROP_FPS)}")
-
+        """Main processing loop"""
+        if not self.initialize_camera():
+            return False  # Camera initialization failed
+            
         self.start_time = datetime.now()
         self.frame_count = 0
 
@@ -291,35 +301,10 @@ class VideoProcessor:
                 print(f"Error processing frame: {str(e)}")
                 break
 
-            key = cv2.waitKey(1) & 0xFF
-            # Handle key presses
-            if key == ord('q'):
-                print("Quitting the video stream.")
+            # Handle input
+            key = cv2.waitKey(1)
+            if not self.input_handler.handle_input(key):
                 break
-            elif key == ord('s'):
-                self.stats_enabled = not self.stats_enabled
-                print(f"Stats: {'On' if self.stats_enabled else 'Off'}")
-            elif key == ord(' '):  # Space
-                print(f"DEBUG: Space pressed! Current game state: {self.game_engine.game_state}")
-                if self.game_engine.game_state == GameState.MENU:
-                    print("DEBUG: Transitioning from MENU to PLAYING")
-                    self.game_engine.game_state = GameState.PLAYING
-                    self.game_engine.start_time = datetime.now()
-                elif self.game_engine.game_state == GameState.GAME_OVER:
-                    print("DEBUG: Transitioning from GAME_OVER to MENU")
-                    self.game_engine = GameEngine(self.config)
-                    self.game_engine.game_state = GameState.MENU
-            elif key == 27:  # ESC
-                self.game_engine.game_state = GameState.MENU
-            elif key == ord('n'):  # Enter name
-                self.player_name = input("Enter player name: ")
-            elif key == ord('l'):  # Leaderboard
-                print("Leaderboard:")
-                for entry in self.leaderboard.get_top_scores():
-                    print(f"{entry['name']}: {entry['score']}")
-            elif key == ord('d'):  # Debug mode
-                self.debug_mode = not self.debug_mode
-                print(f"Debug mode: {'On' if self.debug_mode else 'Off'}")
 
         print("Cleaning up...")
         if self.cap is not None:
