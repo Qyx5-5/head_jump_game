@@ -1,315 +1,265 @@
 import cv2
 import numpy as np
-from datetime import datetime
-from ..utils.game_utils import GameState
+import pygame
+from src.utils.game_utils import GameState
 
 class Renderer:
-    def __init__(self, config):
+    def __init__(self, config, asset_manager):
         self.config = config
-        self.player_color = (0, 255, 0)
-        self.obstacle_color = (255, 0, 0)
+        self.asset_manager = asset_manager
+        self.width = config.get('width', 1280)
+        self.height = config.get('height', 720)
+        
+        # Colors
+        self.BACKGROUND_COLOR = (40, 40, 40)
+        self.GROUND_COLOR = (100, 100, 100)
+        self.OBSTACLE_COLOR = (255, 0, 0)
+        self.POWERUP_COLOR = (255, 255, 0)
+        
+        # Background scrolling
         self.background_x = 0
         self.background_speed = 2
-        self.fps = 0
-        self.frame_count = 0
-        self.start_time = datetime.now()
+        
+        # Initialize Pygame and create window
+        pygame.display.init()
+        pygame.font.init()
+        self.screen = pygame.display.set_mode((self.width, self.height))
+        pygame.display.set_caption("Head Jump Game")
+        
+        # Initialize font
+        self.font = pygame.font.Font(None, 36)
 
-    def render(self, frame, game_state):
-        try:
-            # Create a blank canvas for the game background (black)
-            h, w = self.config.get('height', 720), self.config.get('width', 1280)
-            rendered_frame = np.zeros((h, w, 3), dtype=np.uint8)
-            
-            # Draw background first
-            self._draw_background(rendered_frame, w)
-            
-            # Validate game_state
-            if not isinstance(game_state, dict) or 'state' not in game_state:
-                print("Invalid game state:", game_state)
-                return rendered_frame
-            
-            # Draw game elements based on state
-            if game_state['state'] == GameState.MENU:
-                self._draw_menu(rendered_frame)
-            elif game_state['state'] == GameState.PLAYING:
-                if 'player' in game_state and game_state['player'] is not None:
-                    self._draw_player(rendered_frame, game_state['player'])
-                
-                if 'obstacles' in game_state:
-                    for obstacle in game_state['obstacles']:
-                        self._draw_obstacle(rendered_frame, obstacle)
-                
-                if 'power_ups' in game_state:
-                    for power_up in game_state['power_ups']:
-                        self._draw_powerup(rendered_frame, power_up)
-                
-                self._draw_hud(rendered_frame, game_state)
-            elif game_state['state'] == GameState.GAME_OVER:
-                # Draw final game state first (skip player if None)
-                if 'player' in game_state and game_state['player'] is not None:
-                    self._draw_player(rendered_frame, game_state['player'])
-                
-                if 'obstacles' in game_state:
-                    for obstacle in game_state['obstacles']:
-                        self._draw_obstacle(rendered_frame, obstacle)
-                
-                # Draw game over overlay
-                self._draw_game_over(rendered_frame, game_state)
-            
-            # Add camera feed to top-right corner if available
-            if frame is not None and frame.size > 0:
-                try:
-                    overlay_w = w // 4
-                    overlay_h = h // 4
-                    
-                    # Resize camera feed to overlay size
-                    camera_overlay = cv2.resize(frame, (overlay_w, overlay_h))
-                    
-                    # Calculate position for top-right corner
-                    x_offset = w - overlay_w - 20
-                    y_offset = 20
-                    
-                    # Create region of interest (ROI)
-                    roi = rendered_frame[y_offset:y_offset+overlay_h, x_offset:x_offset+overlay_w]
-                    
-                    # Add semi-transparent black background
-                    overlay_bg = np.zeros((overlay_h, overlay_w, 3), dtype=np.uint8)
-                    cv2.addWeighted(roi, 0.7, overlay_bg, 0.3, 0, roi)
-                    
-                    # Overlay camera feed
-                    rendered_frame[y_offset:y_offset+overlay_h, x_offset:x_offset+overlay_w] = camera_overlay
-                    
-                    # Add border around camera feed
-                    cv2.rectangle(rendered_frame, 
-                                (x_offset, y_offset), 
-                                (x_offset+overlay_w, y_offset+overlay_h), 
-                                (255, 255, 255), 2)
-                except Exception as e:
-                    print(f"Warning: Failed to add camera overlay: {e}")
-            
-            return rendered_frame
-            
-        except Exception as e:
-            print(f"Error in render: {e}")
-            # Return a basic error frame
-            error_frame = np.zeros((self.config.get('height', 720), 
-                                  self.config.get('width', 1280), 3), 
-                                  dtype=np.uint8)
-            cv2.putText(error_frame, f"Rendering Error: {str(e)}", 
-                        (50, error_frame.shape[0]//2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 0, 0), 2)
-            return error_frame
-    
-    def _draw_background(self, frame, width):
-        """Draw the game background"""
-        # Update background position
-        self.background_x -= self.background_speed
-        if self.background_x < -width:
-            self.background_x = 0
+    def render(self, face_frame, game_state):
+        """Main render function"""
+        # Clear screen with background color
+        self.screen.fill(self.BACKGROUND_COLOR)
         
-        # Draw dark background
-        cv2.rectangle(frame, (0, 0), (width, frame.shape[0]), (40, 40, 40), -1)
+        # Draw background for all states
+        self._draw_background()
         
-        # Draw ground
-        ground_y = frame.shape[0] - 100
-        ground_color = (100, 100, 100)
-        ground_thickness = 3
+        # Handle different game states
+        if game_state['state'] == GameState.MENU:
+            self._draw_menu()
+        elif game_state['state'] == GameState.PLAYING:
+            self._draw_game_elements(game_state)
+        elif game_state['state'] == GameState.GAME_OVER:
+            self._draw_game_elements(game_state)  # Show final state
+            self._draw_game_over(game_state['score'])
         
-        # Draw ground pattern
-        for i in range(0, width + 20, 20):  # +20 to ensure full coverage
-            actual_x = (i + self.background_x) % width
-            cv2.line(frame, 
-                     (actual_x, ground_y), 
-                     (actual_x + 10, ground_y), 
-                     ground_color, 
-                     ground_thickness)
-    
-    def _draw_player(self, frame, player_state):
-        player_x = player_state['x']
-        player_y = int(player_state['y'])
-        player_size = player_state['size']
-        ground_level = player_state['ground_level']
+        # Draw face frame if available
+        if face_frame is not None:
+            face_surface = self._convert_cv2_to_pygame(face_frame)
+            self._draw_face_frame(face_surface)
         
-        # Player shadow
-        cv2.ellipse(frame,
-                    (player_x + player_size//2, ground_level),
-                    (player_size//2, 10),
-                    0, 0, 360,
-                    (20, 20, 20),
-                    -1)
+        # Update display
+        pygame.display.flip()
         
-        # Player body - more detailed
-        player_color = (0, 255, 0)
+        # Convert to CV2 format for compatibility
+        return self._pygame_surface_to_cv2(self.screen)
+
+    def _draw_game_elements(self, game_state):
+        """Draw all game elements"""
+        # --- Player Drawing with Invincibility Effect ---
+        player_sprite = None
+        if game_state.get('all_sprites'):
+             sprites = game_state['all_sprites'].sprites()
+             if sprites:
+                 player_sprite = sprites[0] # Assuming player is the first sprite
+
+        is_invincible = game_state.get('is_invincible', False)
+        original_alpha = None
+        if player_sprite and is_invincible:
+            try:
+                # Make player semi-transparent during invincibility
+                original_alpha = player_sprite.image.get_alpha()
+                player_sprite.image.set_alpha(128) # 50% transparent
+            except AttributeError: # Handle if image is not per-pixel alpha
+                print("Warning: Cannot set alpha on player sprite image.")
+                pass 
         
-        # Draw a triangle for the player
-        pts = np.array([
-            [player_x + player_size//2, player_y - player_size],
-            [player_x, player_y],
-            [player_x + player_size, player_y]
-        ], np.int32)
-        cv2.fillPoly(frame, [pts], player_color)
-        cv2.polylines(frame, [pts], True, (0, 200, 0), 3)
+        if game_state.get('all_sprites'):
+            game_state['all_sprites'].draw(self.screen) # Draw player (and potentially others)
+
+        # Restore player alpha after drawing
+        if player_sprite and original_alpha is not None:
+             try:
+                 player_sprite.image.set_alpha(original_alpha)
+             except AttributeError:
+                 pass
+        # --- End Player Drawing ---
+
+        # --- Obstacle Drawing using Assets ---
+        for obstacle in game_state.get('obstacles', []):
+            obstacle_type = obstacle.get('type')
+            asset = self.asset_manager.get_obstacle_asset(obstacle_type)
+            if asset:
+                 # Adjust blit position if asset size differs from obstacle dict size
+                 # For now, assuming asset matches config height/width used in engine
+                 blit_x = int(obstacle['x'])
+                 blit_y = int(obstacle['y'])
+                 self.screen.blit(asset, (blit_x, blit_y))
+            else:
+                 # Fallback: Draw a red rectangle if asset is missing
+                 pygame.draw.rect(self.screen,
+                                (255, 0, 0), # Bright red fallback
+                                pygame.Rect(
+                                    int(obstacle['x']),
+                                    int(obstacle['y']),
+                                    obstacle['width'],
+                                    obstacle['height']
+                                ))
+        # --- End Obstacle Drawing ---
         
-        # Add a small circle for the head
-        cv2.circle(frame, (player_x + player_size//2, player_y - player_size + 10), 10, (0, 200, 0), -1)
-    
-    def _draw_obstacle(self, frame, obs_state):
-        # Obstacle shadow
-        cv2.ellipse(frame,
-                    (int(obs_state['x'] + obs_state['width']//2), int(self.config['height'] - 100)),
-                    (int(obs_state['width']//2), 10),
-                    0, 0, 360,
-                    (20, 20, 20),
-                    -1)
-        
-        # Obstacle body - more detailed
-        obstacle_color = (255, 0, 0)
-        
-        # Draw a rounded rectangle for the obstacle
-        cv2.rectangle(frame, 
-                     (int(obs_state['x']), int(self.config['height'] - 100 - obs_state['height'])),
-                     (int(obs_state['x'] + obs_state['width']), int(self.config['height'] - 100)),
-                     obstacle_color, -1)
-        cv2.rectangle(frame, 
-                     (int(obs_state['x']), int(self.config['height'] - 100 - obs_state['height'])),
-                     (int(obs_state['x'] + obs_state['width']), int(self.config['height'] - 100)),
-                     (200, 0, 0), 3)
-        
-        # Add some spikes on top
-        spike_height = 10
-        for i in range(0, int(obs_state['width']), 10):
-            spike_x = int(obs_state['x']) + i
-            spike_y = int(self.config['height'] - 100 - obs_state['height'])
-            pts = np.array([
-                [spike_x, spike_y],
-                [spike_x + 5, spike_y - spike_height],
-                [spike_x + 10, spike_y]
-            ], np.int32)
-            cv2.fillPoly(frame, [pts], (200, 0, 0))
-    
-    def _draw_powerup(self, frame, powerup_state):
-        power_up_x = int(powerup_state['x'])
-        power_up_y = int(self.config['height'] - 100 - powerup_state['height'])
-        power_up_width = powerup_state['width']
-        power_up_height = powerup_state['height']
-        
-        # Draw a star for the powerup
-        star_points = np.array([
-            [power_up_x + power_up_width // 2, power_up_y],
-            [power_up_x + power_up_width * 3 // 4, power_up_y + power_up_height // 3],
-            [power_up_x + power_up_width, power_up_y + power_up_height // 3],
-            [power_up_x + power_up_width * 5 // 8, power_up_y + power_up_height * 2 // 3],
-            [power_up_x + power_up_width * 3 // 4, power_up_y + power_up_height],
-            [power_up_x + power_up_width // 2, power_up_y + power_up_height * 5 // 6],
-            [power_up_x + power_up_width // 4, power_up_y + power_up_height],
-            [power_up_x, power_up_y + power_up_height * 2 // 3],
-            [power_up_x + power_up_width // 8, power_up_y + power_up_height // 3],
-            [power_up_x + power_up_width // 4, power_up_y + power_up_height // 3]
-        ], np.int32)
-        cv2.fillPoly(frame, [star_points], (0, 255, 255))
-    
-    def _draw_hud(self, frame, game_state):
-        h, w = frame.shape[:2]
+        # --- Powerup Drawing using Assets ---
+        for powerup in game_state.get('power_ups', []):
+            powerup_type = powerup.get('type')
+            asset = self.asset_manager.get_powerup_asset(powerup_type)
+            if asset:
+                blit_x = int(powerup['x'])
+                blit_y = int(powerup['y'])
+                self.screen.blit(asset, (blit_x, blit_y))
+            else:
+                # Fallback: Draw a yellow circle if asset is missing
+                pygame.draw.circle(self.screen,
+                                 self.POWERUP_COLOR, # Default yellow
+                                 (int(powerup['x'] + powerup['width']//2),
+                                  int(powerup['y'] + powerup['height']//2)),
+                                 powerup.get('width', 20) // 2)
+        # --- End Powerup Drawing ---
         
         # Draw score
-        cv2.putText(frame, f"Score: {game_state['score']}", (20, 80),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        self._draw_score(game_state['score'])
         
-        # Only show controls reminder briefly at start
-        if game_state['start_time'] and (datetime.now() - game_state['start_time']).total_seconds() < 5:
-            cv2.putText(frame, "Move head UP to jump!", (20, 40),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 1)
-    
-    def _draw_menu(self, frame):
-        h, w = frame.shape[:2]
+        # Draw active powerup indicators
+        self._draw_active_powerup_info(game_state)
+
+    def _draw_menu(self):
+        """Draw menu screen"""
+        title = self.font.render('Head Jump Game', True, (255, 255, 255))
+        start_text = self.font.render('Press SPACE to Start', True, (255, 255, 255))
         
-        # Semi-transparent overlay
-        overlay = np.zeros((h, w, 3), dtype=np.uint8)
-        cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.7, frame, 1.0, 0, frame)
+        title_rect = title.get_rect(center=(self.width//2, self.height//3))
+        start_rect = start_text.get_rect(center=(self.width//2, self.height//2))
         
-        # Title - centered
-        title = "Head Jump Game"
-        title_size = cv2.getTextSize(title, cv2.FONT_HERSHEY_SIMPLEX, 1.5, 2)[0]
-        cv2.putText(frame, title, 
-                    (w//2 - title_size[0]//2, h//3),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1.5, (255, 255, 255), 2)
+        self.screen.blit(title, title_rect)
+        self.screen.blit(start_text, start_rect)
+
+    def _draw_game_over(self, score):
+        """Draw game over screen"""
+        game_over = self.font.render('Game Over', True, (255, 0, 0))
+        score_text = self.font.render(f'Final Score: {score}', True, (255, 255, 255))
+        restart_text = self.font.render('Press SPACE to Restart', True, (255, 255, 255))
         
-        # Instructions
-        instructions = "Press Space to Start"
-        instructions_size = cv2.getTextSize(instructions, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
-        cv2.putText(frame, instructions,
-                    (w//2 - instructions_size[0]//2, h//2),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-    
-    def _draw_game_over(self, frame, game_state):
-        try:
-            h, w = frame.shape[:2]
+        game_over_rect = game_over.get_rect(center=(self.width//2, self.height//3))
+        score_rect = score_text.get_rect(center=(self.width//2, self.height//2))
+        restart_rect = restart_text.get_rect(center=(self.width//2, 2*self.height//3))
+        
+        self.screen.blit(game_over, game_over_rect)
+        self.screen.blit(score_text, score_rect)
+        self.screen.blit(restart_text, restart_rect)
+
+    def _draw_multiplier(self, multiplier):
+        """Draw score multiplier"""
+        multiplier_text = self.font.render(f'x{multiplier}', True, (255, 255, 0))
+        self.screen.blit(multiplier_text, (10, 50))
+
+    def _draw_background(self):
+        """Draw the game background"""
+        # Update background position
+        self.background_x = (self.background_x - self.background_speed) % self.width
+        
+        # Draw ground
+        ground_y = self.height - 100
+        pygame.draw.line(self.screen, 
+                        self.GROUND_COLOR,
+                        (0, ground_y),
+                        (self.width, ground_y),
+                        3)
+        
+        # Draw ground pattern
+        for i in range(0, self.width + 20, 20):
+            actual_x = (i + self.background_x) % self.width
+            pygame.draw.line(self.screen,
+                           self.GROUND_COLOR,
+                           (actual_x, ground_y),
+                           (actual_x + 10, ground_y),
+                           3)
+
+    def _draw_score(self, score):
+        """Draw the score"""
+        score_text = self.font.render(f'Score: {score}', True, (255, 255, 255))
+        self.screen.blit(score_text, (10, 10))
+
+    def _convert_cv2_to_pygame(self, cv2_image):
+        """Convert OpenCV image to Pygame surface"""
+        if cv2_image is None:
+            return None
             
-            # Semi-transparent overlay
-            overlay = np.zeros((h, w, 3), dtype=np.uint8)
-            cv2.rectangle(overlay, (0, 0), (w, h), (0, 0, 0), -1)
-            cv2.addWeighted(overlay, 0.7, frame, 1.0, 0, frame)
+        # Resize face frame
+        face_height = self.height // 4
+        face_width = self.width // 4
+        cv2_image = cv2.resize(cv2_image, (face_width, face_height))
+        
+        # Convert from BGR to RGB
+        cv2_image = cv2.cvtColor(cv2_image, cv2.COLOR_BGR2RGB)
+        
+        # Create Pygame surface
+        shape = cv2_image.shape[1::-1]  # width, height
+        return pygame.image.frombuffer(cv2_image.tobytes(), shape, 'RGB')
+
+    def _pygame_surface_to_cv2(self, pygame_surface):
+        """Convert Pygame surface to OpenCV image (for compatibility)"""
+        # Get the size of the surface
+        size = pygame_surface.get_size()
+        
+        # Get raw pixel data
+        view = pygame.surfarray.array3d(pygame_surface)
+        
+        # Convert from RGB to BGR
+        view = view.transpose([1, 0, 2])
+        img_bgr = cv2.cvtColor(view, cv2.COLOR_RGB2BGR)
+        
+        return img_bgr
+
+    def _draw_face_frame(self, face_surface):
+        """Draw the face frame in the corner"""
+        if face_surface is None:
+            return
             
-            # Game Over text
-            game_over_text = "Game Over"
-            text_size = cv2.getTextSize(game_over_text, cv2.FONT_HERSHEY_SIMPLEX, 2, 3)[0]
-            cv2.putText(frame, game_over_text,
-                        (w//2 - text_size[0]//2, h//3),
-                        cv2.FONT_HERSHEY_SIMPLEX, 2, (255, 0, 0), 3)
+        # Calculate position (top-right corner)
+        x_offset = self.width - face_surface.get_width() - 10
+        y_offset = 10
+        
+        # Draw face frame
+        self.screen.blit(face_surface, (x_offset, y_offset))
+
+    def cleanup(self):
+        """Clean up resources"""
+        pass  # Pygame.quit() should be handled by the game engine
+
+    # Add a new helper method for drawing active powerup info
+    def _draw_active_powerup_info(self, game_state):
+        y_offset = 50 # Start below score
+        
+        # Draw score multiplier if active
+        multiplier = game_state.get('score_multiplier', 1.0)
+        if multiplier > 1.0:
+            color = self.config.get('powerup', {}).get('types', {}).get('score_boost', {}).get('color', (255, 255, 0))
+            multiplier_text = self.font.render(f'Score x{multiplier:.1f}', True, tuple(color))
+            self.screen.blit(multiplier_text, (10, y_offset))
+            y_offset += 30
             
-            # Show final score
-            score = game_state.get('score', 0)  # Use get() with default value
-            score_text = f"Final Score: {score}"
-            score_size = cv2.getTextSize(score_text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)[0]
-            cv2.putText(frame, score_text,
-                        (w//2 - score_size[0]//2, h//2),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        # Draw invincibility indicator
+        if game_state.get('is_invincible', False):
+            color = self.config.get('powerup', {}).get('types', {}).get('invincibility', {}).get('color', (0, 255, 255))
+            invincibility_text = self.font.render('Invincible!', True, tuple(color))
+            self.screen.blit(invincibility_text, (10, y_offset))
+            y_offset += 30
             
-            # Instructions
-            instructions = [
-                "Press SPACE to Play Again",
-                "Press ESC for Menu",
-                "Press Q to Quit"
-            ]
-            
-            y_offset = h//2 + 50
-            for instruction in instructions:
-                inst_size = cv2.getTextSize(instruction, cv2.FONT_HERSHEY_SIMPLEX, 0.8, 2)[0]
-                cv2.putText(frame, instruction,
-                            (w//2 - inst_size[0]//2, y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-                y_offset += 40
-        except Exception as e:
-            print(f"Error in _draw_game_over: {e}")
-    
-    def draw_stats(self, frame, face_stats, camera_id):
-        """Draw statistics overlay (moved from VideoProcessor)"""
-        h, w = frame.shape[:2]
-        
-        # Create semi-transparent overlay for stats
-        overlay = frame.copy()
-        cv2.rectangle(overlay, (10, 10), (300, 200), (0, 0, 0), -1)
-        cv2.addWeighted(overlay, 0.3, frame, 0.7, 0, frame)
-        
-        # Calculate FPS
-        self.frame_count += 1
-        elapsed_time = (datetime.now() - self.start_time).total_seconds()
-        if elapsed_time > 0:
-            self.fps = self.frame_count / elapsed_time
-        
-        # Draw stats
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        y_offset = 35
-        stats = [
-            f"FPS: {self.fps:.1f}",
-            f"Resolution: {w}x{h}",
-            f"Camera ID: {camera_id}",
-            f"Faces Detected: {face_stats['face_count']}",
-        ]
-        
-        for i, stat in enumerate(stats):
-            cv2.putText(frame, stat, (20, y_offset + i*25),
-                       font, 0.6, (255, 255, 255), 1)
-        
-        return frame
+        # Draw slow motion indicator
+        slow_factor = game_state.get('slow_motion_factor', 1.0)
+        if slow_factor < 1.0:
+            color = self.config.get('powerup', {}).get('types', {}).get('slow_motion', {}).get('color', (255, 0, 255))
+            slow_text = self.font.render(f'Slow Motion ({slow_factor:.1f}x)', True, tuple(color))
+            self.screen.blit(slow_text, (10, y_offset))
+            y_offset += 30

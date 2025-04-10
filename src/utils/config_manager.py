@@ -62,11 +62,17 @@ class ConfigManager:
         """Merge loaded config with defaults, ensuring all required values exist"""
         merged = self.DEFAULT_CONFIG.copy()
         for section, values in loaded_config.items():
-            if section in merged:
+            if section in merged and isinstance(merged[section], dict) and isinstance(values, dict):
+                # Update existing sections (like 'video', 'game', etc.)
                 merged[section].update(values)
+            else:
+                # Add new sections (like 'obstacles', 'difficulty')
+                merged[section] = values
         
-        merged['width'] = merged['video']['width']
-        merged['height'] = merged['video']['height']
+        # Ensure top-level width/height are present for compatibility if needed elsewhere
+        if 'video' in merged:
+             merged['width'] = merged['video'].get('width', 1280) # Use .get for safety
+             merged['height'] = merged['video'].get('height', 720)
         return merged
 
     def get(self, section: str, key: str, default: Any = None) -> Any:

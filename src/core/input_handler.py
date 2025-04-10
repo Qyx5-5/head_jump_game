@@ -1,6 +1,6 @@
 from datetime import datetime
-from ..utils.game_utils import GameState
-from ..core.engine import GameEngine
+from src.utils.game_utils import GameState
+from src.core.engine import GameEngine
 
 class InputHandler:
     def __init__(self, game_engine, renderer, leaderboard):

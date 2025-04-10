@@ -18,7 +18,70 @@
         "ground_level_offset": 100
     },
     "powerup": {
-        "duration": 5,
-        "score_multiplier": 2.0
+        "spawn_chance": 0.005,
+        "speed_factor": 0.8,
+        "default_duration": 5,
+        "types": {
+            "score_boost": {
+                "color": [255, 255, 0],
+                "multiplier": 2.0,
+                "duration": 5
+            },
+            "invincibility": {
+                "color": [0, 255, 255],
+                "duration": 4
+            },
+            "slow_motion": {
+                "color": [255, 0, 255],
+                "speed_multiplier": 0.5,
+                "duration": 6
+            }
+        }
+    },
+    "face_detection": {
+        "enabled": true,
+        "max_faces": 1,
+        "refine_landmarks": true,
+        "min_detection_confidence": 0.5,
+        "min_tracking_confidence": 0.5,
+        "process_every_n_frames": 1
+    },
+    "obstacles": {
+        "base": {
+            "width": 50,
+            "height_min": 50,
+            "height_max": 100,
+            "color": [255, 0, 0],
+            "y_pos": "ground"
+        },
+        "low_cactus": {
+            "width": 40,
+            "height_min": 60,
+            "height_max": 80,
+            "color": [0, 180, 0],
+            "y_pos": "ground"
+        },
+        "flying_rock": {
+            "width": 60,
+            "height_min": 50,
+            "height_max": 50,
+            "color": [150, 150, 150],
+            "y_pos": "air"
+        },
+        "short_gap": { "frames": 20 },
+        "wide_gap": { "frames": 40 }
+    },
+    "obstacle_patterns": {
+        "double_low": ["low_cactus", "short_gap", "low_cactus"],
+        "high_low": ["flying_rock", "wide_gap", "low_cactus"],
+        "low_high_low": ["low_cactus", "short_gap", "flying_rock", "short_gap", "low_cactus"]
+    },
+    "difficulty": {
+        "speed_increase_score": 500,
+        "speed_increase_amount": 0.5,
+        "interval_decrease_score": 1000,
+        "interval_decrease_amount": 3,
+        "min_interval_cap": 30,
+        "pattern_spawn_chance": 0.3
     }
 } 
